@@ -1,0 +1,67 @@
+import { jwtVerify } from "jose";
+import { NextRequest } from "next/server";
+import prisma from "../db";
+import { AppError } from "@/utils/AppError";
+
+export type AuthUser = {
+    userId: string,
+    role: "BUSINESS_ANALYST" | "BUSINESS_OWNER",
+    sessionId: string
+}
+
+export default async function getAuthUser(request: NextRequest): Promise<AuthUser> {
+
+
+    const authHeader = request.headers.get('authorization')
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        throw new Error('Authorized token is not provided')
+    }
+
+    const token = authHeader.split(' ')[1]
+
+    if (!token) {
+        throw new Error('Token is not provided')
+    }
+
+    try {
+
+        const secret = new TextEncoder().encode(process.env.ACCESS_TOKEN)
+
+        const { payload } = await jwtVerify<AuthUser>(token, secret)
+
+        if (
+            !payload.userId ||
+            !payload.role ||
+            !payload.sessionId
+        ) {
+            throw new Error("Invalid token payload")
+        }
+
+        if (!payload.sessionId) {
+            throw new Error('Invalid Session')
+        }
+
+        const session = await prisma.logout.findFirst(
+            {
+                where: {
+                    id: payload.sessionId
+                },
+                select: {
+                    userId: true,
+                    revoke: true
+                }
+            }
+        )
+
+        if (!session || session.userId !== payload.userId || session.revoke) {
+            throw new AppError('Invalid access token', 401)
+        }
+
+        return payload
+    }
+    catch {
+        throw new AppError('Invalid access token', 401)
+    }
+
+}
